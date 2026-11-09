@@ -7,38 +7,49 @@ import requests
 import email.utils
 from dotenv import load_dotenv
 
-# Load variables from .env
+# Load variables strictly from .env
 load_dotenv()
 
 # Delta Exchange API Settings
-DELTA_BASE_URL = os.getenv("DELTA_BASE_URL", "https://cdn-ind.testnet.deltaex.org").strip().rstrip("/")
+DELTA_BASE_URL = os.getenv("DELTA_BASE_URL", "").strip().rstrip("/")
 API_KEY = os.getenv("DELTA_API_KEY", "").strip()
 API_SECRET = os.getenv("DELTA_API_SECRET", "").strip()
 
-# Build proxy configuration with fallbacks
-proxy_host = os.getenv("PROXY_HOST", "45.38.107.97").strip()
-proxy_port = os.getenv("PROXY_PORT", "6014").strip()
-proxy_user = os.getenv("PROXY_USERNAME", "wcakifdd").strip()
-proxy_pass = os.getenv("PROXY_PASSWORD", "bef9r26uv6jm").strip()
-default_proxy_url = f"http://{proxy_user}:{proxy_pass}@{proxy_host}:{proxy_port}"
+# Build proxy configuration strictly from .env (no hardcoded credentials)
+proxy_host = os.getenv("PROXY_HOST", "").strip()
+proxy_port = os.getenv("PROXY_PORT", "").strip()
+proxy_user = os.getenv("PROXY_USERNAME", "").strip()
+proxy_pass = os.getenv("PROXY_PASSWORD", "").strip()
+
+default_proxy_url = ""
+if proxy_user and proxy_pass and proxy_host and proxy_port:
+    default_proxy_url = f"http://{proxy_user}:{proxy_pass}@{proxy_host}:{proxy_port}"
 
 HTTP_PROXY = os.getenv("HTTP_PROXY", default_proxy_url).strip()
 HTTPS_PROXY = os.getenv("HTTPS_PROXY", default_proxy_url).strip()
 
-PROXIES = {
-    "http": HTTP_PROXY,
-    "https": HTTPS_PROXY,
-}
+PROXIES = {}
+if HTTP_PROXY:
+    PROXIES["http"] = HTTP_PROXY
+if HTTPS_PROXY:
+    PROXIES["https"] = HTTPS_PROXY
 
 def check_egress_ip():
-    """Verify karein ki traffic Webshare static IP (45.38.107.97) se hi ja raha hai"""
+    """Verify karein ki traffic configured proxy se hi ja raha hai"""
     print("\n--- [Step 1] Checking Outbound Egress IP ---")
+    if not PROXIES:
+        print("❌ Error: Proxy settings missing in .env. Please configure HTTP_PROXY or PROXY_HOST/USER/PASS.")
+        return False
+
     try:
         res = requests.get("https://ipv4.webshare.io/", proxies=PROXIES, timeout=15)
         current_ip = res.text.strip()
         print(f"Detected Outbound IP: {current_ip}")
-        if current_ip == proxy_host:
-            print(f"✅ Success! Static Outbound IP matches {proxy_host}.")
+        if proxy_host and current_ip == proxy_host:
+            print(f"✅ Success! Static Outbound IP matches configured proxy ({proxy_host}).")
+            return True
+        elif not proxy_host:
+            print("✅ Outbound proxy connection verified.")
             return True
         else:
             print(f"⚠️ Warning: Outbound IP ({current_ip}) does not match expected ({proxy_host}).")
@@ -84,11 +95,14 @@ def make_authenticated_request(method, path, query_string="", payload=""):
 def get_delta_wallet():
     """Delta Authenticated Wallet Balance fetch karna aur cleanly format karke display karna"""
     print(f"\n==================================================")
-    print(f"       DELTA EXCHANGE DEMO WALLET DETAILS")
+    print(f"       DELTA EXCHANGE WALLET DETAILS")
     print(f"==================================================")
     
     if not API_KEY or not API_SECRET:
         print("❌ DELTA_API_KEY or DELTA_API_SECRET missing in .env")
+        return False
+    if not DELTA_BASE_URL:
+        print("❌ DELTA_BASE_URL missing in .env")
         return False
 
     try:
@@ -142,7 +156,7 @@ def get_delta_wallet():
         return False
 
 def get_open_positions():
-    """Demo account ke active positions fetch karna"""
+    """Active positions fetch karna"""
     try:
         res = make_authenticated_request("GET", "/v2/positions/margined")
         if res.status_code == 200:
@@ -164,9 +178,11 @@ def get_open_positions():
 if __name__ == "__main__":
     print("==================================================")
     print("Testing Outbound Connection to Delta Exchange...")
-    print(f"Target Proxy: {proxy_host}:{proxy_port}")
+    if proxy_host:
+        print(f"Target Proxy: {proxy_host}:{proxy_port}")
     print(f"Active Base URL: {DELTA_BASE_URL}")
-    print(f"API Key: {API_KEY[:6]}...{API_KEY[-4:] if len(API_KEY) > 10 else ''}")
+    if API_KEY:
+        print(f"API Key: {API_KEY[:6]}...{API_KEY[-4:] if len(API_KEY) > 10 else ''}")
     print("==================================================")
 
     if check_egress_ip():

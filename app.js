@@ -39,8 +39,8 @@ export default {
       return new Response(
         JSON.stringify({
           status: "CONFIG_ERROR",
-          message: "Missing required environment configuration in .env",
-          missing_variables: missingConfigs
+          message: "Required environment configuration is missing.",
+          missing_count: missingConfigs.length
         }, null, 2),
         {
           status: 500,
@@ -53,15 +53,14 @@ export default {
     }
 
     // 3. Browser Root Check & Diagnostics (GET only on /)
+    // Secure status: does NOT reveal internal upstream URLs or proxy IPs
     if ((url.pathname === "/" || url.pathname === "") && request.method === "GET") {
       return new Response(
         JSON.stringify({
           status: "ONLINE",
-          message: "Cloudflare -> Ngrok -> Static Proxy Gateway is Running",
-          target_upstream: targetBase,
-          proxy_static_ip: proxyHost,
-          proxy_port: proxyPort,
-          authtoken_configured: Boolean(token),
+          message: "Gateway Proxy is Active",
+          upstream_configured: Boolean(targetBase),
+          proxy_configured: Boolean(proxyHost),
           timestamp: new Date().toISOString()
         }, null, 2),
         {
@@ -74,7 +73,7 @@ export default {
       );
     }
 
-    // 4. IP Check Endpoint (Verify Webshare Static IP)
+    // 4. IP Check Endpoint (Verify Webshare Static IP without leaking IP publicly)
     if (url.pathname === "/test-ip") {
       try {
         const testRes = await fetchViaProxy(
@@ -84,12 +83,12 @@ export default {
         );
         const ipText = await testRes.text();
         const outboundIp = ipText.trim();
+        const isMatched = outboundIp === proxyHost;
         return new Response(
           JSON.stringify({ 
             status: "SUCCESS",
-            outbound_ip: outboundIp,
-            expected_proxy_ip: proxyHost,
-            match: outboundIp === proxyHost
+            proxy_verified: isMatched,
+            timestamp: new Date().toISOString()
           }, null, 2), 
           {
             status: 200,
@@ -103,7 +102,7 @@ export default {
         return new Response(
           JSON.stringify({ 
             status: "ERROR", 
-            error: e.message 
+            error: "Proxy connection check failed" 
           }, null, 2), 
           { 
             status: 500,
@@ -163,9 +162,8 @@ export default {
     } catch (err) {
       return new Response(
         JSON.stringify({ 
-          error: err.message, 
-          gateway: "Cloudflare-to-Ngrok",
-          target_url: targetUrl
+          error: "Gateway forwarding error", 
+          status: 502
         }, null, 2), 
         {
           status: 502,

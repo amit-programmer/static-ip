@@ -10,11 +10,11 @@ This repository provides two powerful tools:
 
 ## 🚀 Key Features
 
-- **Fixed Outbound Egress IP (`45.38.107.97`)**: Eliminates `invalid_api_key` and IP whitelist errors caused by dynamic home Wi-Fi or auto-restarting cloud containers (Render, Railway, AWS).
+- **Fixed Outbound Egress IP**: Eliminates `invalid_api_key` and IP whitelist errors caused by dynamic home Wi-Fi or auto-restarting cloud containers (Render, Railway, AWS).
 - **HMAC-SHA256 Request Signing**: Implements Delta Exchange API authentication compatible with Delta Exchange India & Global.
 - **Server Timestamp Synchronization**: Automatically queries live HTTP `Date` headers from Delta Exchange to eliminate clock drift and expired signature issues within the strict 5-second window.
 - **Full Wallet & Position Inspector**: Fetches real-time Net Equity, Available Balances, Margin used, and Open Futures/Options positions.
-- **Zero-Secret Cloudflare Worker**: Reads all configuration dynamically from runtime environment variables.
+- **Zero-Secret Architecture**: All sensitive credentials, tokens, and proxy URLs are strictly loaded from `.env` and never hardcoded in source files.
 - **Chunked Transfer Stream Decoding**: Decodes HTTP/1.1 chunked streams over raw TCP sockets without corrupting response payloads.
 
 ---
@@ -52,14 +52,14 @@ DELTA_BASE_URL=https://cdn-ind.testnet.deltaex.org
 DELTA_API_KEY=your_api_key_here
 DELTA_API_SECRET=your_api_secret_here
 
-# Webshare Static Proxy
-PROXY_HOST=45.38.107.97
+# Outbound Static Proxy
+PROXY_HOST=your_static_proxy_ip
 PROXY_PORT=6014
 PROXY_USERNAME=your_proxy_username
 PROXY_PASSWORD=your_proxy_password
 
-HTTP_PROXY=http://username:password@45.38.107.97:6014
-HTTPS_PROXY=http://username:password@45.38.107.97:6014
+HTTP_PROXY=http://username:password@your_static_proxy_ip:6014
+HTTPS_PROXY=http://username:password@your_static_proxy_ip:6014
 ```
 
 ---
@@ -68,10 +68,7 @@ HTTPS_PROXY=http://username:password@45.38.107.97:6014
 
 In your [Delta Exchange API Management](https://india.delta.exchange) dashboard:
 1. Open your API Key settings.
-2. Under **Whitelisted IP Address**, enter your static IP:
-   ```text
-   45.38.107.97
-   ```
+2. Under **Whitelisted IP Address**, enter your static IP (e.g. `your_static_proxy_ip`).
 3. Click **Update IP Address**.
 
 ---
@@ -87,16 +84,16 @@ python test_delta.py
 ```text
 ==================================================
 Testing Outbound Connection to Delta Exchange...
-Target Proxy: 45.38.107.97:6014
+Target Proxy: <your-static-proxy-ip>:6014
 Active Base URL: https://cdn-ind.testnet.deltaex.org
 ==================================================
 
 --- [Step 1] Checking Outbound Egress IP ---
-Detected Outbound IP: 45.38.107.97
-✅ Success! Static Outbound IP matches 45.38.107.97.
+Detected Outbound IP: <your-static-proxy-ip>
+✅ Success! Static Outbound IP matches configured proxy.
 
 ==================================================
-       DELTA EXCHANGE DEMO WALLET DETAILS
+       DELTA EXCHANGE WALLET DETAILS
 ==================================================
 
 💰 Account Equity Summary:
