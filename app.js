@@ -4,7 +4,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Read all configuration strictly from env (.env / .dev.vars)
+    // Read all configuration strictly from env (.env / .dev.vars / Cloudflare Secrets)
     const proxyHost = env.PROXY_HOST;
     const proxyPort = env.PROXY_PORT ? parseInt(env.PROXY_PORT, 10) : 0;
     
@@ -28,7 +28,28 @@ export default {
       });
     }
 
-    // 2. Validate environment configuration
+    // 2. Browser Root Check & Diagnostics (GET only on /)
+    // Runs before proxy validation so the status check always responds with 200 OK
+    if ((url.pathname === "/" || url.pathname === "") && request.method === "GET") {
+      return new Response(
+        JSON.stringify({
+          status: "ONLINE",
+          message: "Gateway Proxy is Active",
+          upstream_configured: Boolean(targetBase),
+          proxy_configured: Boolean(proxyHost && proxyAuth),
+          timestamp: new Date().toISOString()
+        }, null, 2),
+        {
+          status: 200,
+          headers: { 
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*"
+          }
+        }
+      );
+    }
+
+    // 3. Validate environment configuration for outbound proxy calls
     const missingConfigs = [];
     if (!proxyHost) missingConfigs.push("PROXY_HOST");
     if (!proxyPort) missingConfigs.push("PROXY_PORT");
@@ -39,32 +60,11 @@ export default {
       return new Response(
         JSON.stringify({
           status: "CONFIG_ERROR",
-          message: "Required environment configuration is missing.",
+          message: "Required environment configuration is missing on Cloudflare. Run 'npm run push-secrets' to sync .env secrets to Cloudflare.",
           missing_count: missingConfigs.length
         }, null, 2),
         {
           status: 500,
-          headers: { 
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"
-          }
-        }
-      );
-    }
-
-    // 3. Browser Root Check & Diagnostics (GET only on /)
-    // Secure status: does NOT reveal internal upstream URLs or proxy IPs
-    if ((url.pathname === "/" || url.pathname === "") && request.method === "GET") {
-      return new Response(
-        JSON.stringify({
-          status: "ONLINE",
-          message: "Gateway Proxy is Active",
-          upstream_configured: Boolean(targetBase),
-          proxy_configured: Boolean(proxyHost),
-          timestamp: new Date().toISOString()
-        }, null, 2),
-        {
-          status: 200,
           headers: { 
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*"

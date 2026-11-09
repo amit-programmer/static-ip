@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "sync-env": "node -e \"const fs=require('fs'); if(fs.existsSync('.env')) { fs.copyFileSync('.env','.dev.vars'); console.log('✓ Synced .env to .dev.vars for Wrangler'); }\"",
+    "push-secrets": "node sync-secrets.js",
     "predev": "npm run sync-env",
     "prestart": "npm run sync-env",
     "dev": "npx wrangler dev",
