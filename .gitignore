@@ -1,0 +1,28 @@
+# Environment and Secrets (NEVER COMMIT)
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Cloudflare and Build Artifacts
+.wrangler/
+dist/
+
+# Scratch & Temporary Notes
+test.txt
+*.log
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

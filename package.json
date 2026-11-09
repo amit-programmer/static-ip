@@ -1,0 +1,19 @@
+{
+  "name": "static-ip-proxy",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker Static IP Outbound Proxy Gateway to Ngrok",
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "sync-env": "node -e \"const fs=require('fs'); if(fs.existsSync('.env')) { fs.copyFileSync('.env','.dev.vars'); console.log('✓ Synced .env to .dev.vars for Wrangler'); }\"",
+    "predev": "npm run sync-env",
+    "prestart": "npm run sync-env",
+    "dev": "npx wrangler dev",
+    "start": "npx wrangler dev",
+    "deploy": "npx wrangler deploy",
+    "tail": "npx wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.111.0"
+  }
+}
