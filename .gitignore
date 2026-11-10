@@ -2,10 +2,8 @@
 .env
 .env.*
 !.env.example
-.dev.vars
 
-# Dependencies
-node_modules/
+# Python Bytecode and Virtual Environments
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,9 +11,10 @@ __pycache__/
 venv/
 env/
 
-# Cloudflare and Build Artifacts
+# Cloudflare and Build Artifacts (Ignored)
 .wrangler/
 dist/
+node_modules/
 
 # Scratch & Temporary Notes
 test.txt

@@ -19,11 +19,14 @@ from test_delta import (
 PORT = int(os.getenv("PORT", "5000"))
 
 class DeltaProxyHandler(BaseHTTPRequestHandler):
+    def _send_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+
     def do_OPTIONS(self):
         self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        self._send_cors_headers()
         self.end_headers()
 
     def do_GET(self):
@@ -31,7 +34,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
         if self.path == "/" or self.path == "":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self._send_cors_headers()
             self.end_headers()
             response = {
                 "status": "ONLINE",
@@ -40,6 +43,8 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
                 "target_delta_url": DELTA_BASE_URL,
                 "endpoints": {
                     "wallet_balance": "/v2/wallet/balances",
+                    "positions": "/v2/positions/margined",
+                    "products": "/v2/products",
                     "test_static_ip": "/test-ip"
                 }
             }
@@ -53,7 +58,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
                 current_ip = res.text.strip()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({
                     "status": "SUCCESS",
@@ -64,29 +69,56 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
 
-        # 3. Delta Exchange API Forwarding (e.g. /v2/wallet/balances)
+        # 3. Delta Exchange API Forwarding (GET)
         if self.path.startswith("/v2/"):
-            try:
-                # Calls Delta Exchange through Webshare proxy with HMAC signature
-                res = make_authenticated_request("GET", self.path)
-                self.send_response(res.status_code)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(res.content)
-            except Exception as e:
-                self.send_response(502)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            self._forward_to_delta("GET")
             return
 
         self.send_response(404)
         self.end_headers()
+
+    def do_POST(self):
+        if self.path.startswith("/v2/"):
+            self._forward_to_delta("POST")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_PUT(self):
+        if self.path.startswith("/v2/"):
+            self._forward_to_delta("PUT")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_DELETE(self):
+        if self.path.startswith("/v2/"):
+            self._forward_to_delta("DELETE")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def _forward_to_delta(self, method):
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            payload = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
+            res = make_authenticated_request(method, self.path, payload=payload)
+            self.send_response(res.status_code)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(res.content)
+        except Exception as e:
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
 def run_server():
     server_address = ("0.0.0.0", PORT)
