@@ -58,20 +58,31 @@ def check_egress_ip():
         print(f"❌ Proxy connection error: {e}")
         return False
 
-def get_server_timestamp():
-    """Delta server ka exact timestamp fetch karein via Date header taaki time drift na ho"""
+TIME_OFFSET = 0
+
+def sync_time_offset():
+    """Delta server ka live timestamp /health se fetch karein (uncached, ultra-fast)"""
+    global TIME_OFFSET
     try:
-        res = requests.get(f"{DELTA_BASE_URL}/v2/products", proxies=PROXIES, timeout=10)
+        res = requests.get(f"{DELTA_BASE_URL}/health", timeout=5)
         date_header = res.headers.get("Date")
         if date_header:
             dt = email.utils.parsedate_to_datetime(date_header)
-            return int(dt.timestamp())
+            server_ts = int(dt.timestamp())
+            TIME_OFFSET = server_ts - int(time.time())
     except Exception:
-        pass
-    return int(time.time())
+        TIME_OFFSET = 0
 
-def make_authenticated_request(method, path, query_string="", payload=""):
-    """Generic helper to make signed Delta Exchange API requests"""
+# Initial sync at module load
+sync_time_offset()
+
+def get_server_timestamp():
+    """Calculates instantaneous server timestamp without extra network latency or caching"""
+    return int(time.time()) + TIME_OFFSET
+
+def make_authenticated_request(method, path, query_string="", payload="", retry_on_expired=True):
+    """Generic helper to make signed Delta Exchange API requests with self-healing time sync"""
+    global TIME_OFFSET
     timestamp = str(get_server_timestamp())
     signature_data = method + timestamp + path + query_string + payload
     signature = hmac.new(
@@ -84,13 +95,27 @@ def make_authenticated_request(method, path, query_string="", payload=""):
         "api-key": API_KEY,
         "signature": signature,
         "timestamp": timestamp,
-        "User-Agent": "python-rest-client",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Content-Type": "application/json",
         "Accept": "application/json"
     }
 
     url = f"{DELTA_BASE_URL}{path}{query_string}"
-    return requests.request(method, url, headers=headers, data=payload if payload else None, proxies=PROXIES, timeout=15)
+    res = requests.request(method, url, headers=headers, data=payload if payload else None, proxies=PROXIES, timeout=15)
+
+    # Self-healing: agar expired_signature aaye, to server_time context se time offset adjust karke 1 baar retry karein
+    if res.status_code == 401 and retry_on_expired:
+        try:
+            err_data = res.json()
+            if err_data.get("error", {}).get("code") == "expired_signature":
+                server_time = err_data.get("error", {}).get("context", {}).get("server_time")
+                if server_time:
+                    TIME_OFFSET = int(server_time) - int(time.time())
+                    return make_authenticated_request(method, path, query_string, payload, retry_on_expired=False)
+        except Exception:
+            pass
+
+    return res
 
 def get_delta_wallet():
     """Delta Authenticated Wallet Balance fetch karna aur cleanly format karke display karna"""
@@ -133,7 +158,7 @@ def get_delta_wallet():
         has_positive_balance = False
         for item in results:
             asset = item.get("asset", {})
-            symbol = asset.get("symbol", "N/A")
+            symbol = item.get("asset_symbol") or (asset.get("symbol") if isinstance(asset, dict) else "USDT")
             total = float(item.get("balance", "0") or 0)
             available = float(item.get("available_balance", "0") or 0)
             order_margin = float(item.get("order_margin", "0") or 0) + float(item.get("position_margin", "0") or 0)
