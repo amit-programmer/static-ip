@@ -6,7 +6,7 @@ export default {
 
     // Read all configuration strictly from env (.env / .dev.vars / Cloudflare Secrets)
     const proxyHost = env.PROXY_HOST;
-    const proxyPort = env.PROXY_PORT ? parseInt(env.PROXY_PORT, 10) : 0;
+    const proxyPort = env.PROXY_PORT ? parseInt(env.PROXY_PORT, 10) : 6014;
     
     // Resolve Proxy Authorization: from PROXY_AUTH or PROXY_USERNAME + PROXY_PASSWORD
     let proxyAuth = env.PROXY_AUTH;
@@ -14,8 +14,8 @@ export default {
       proxyAuth = "Basic " + btoa(`${env.PROXY_USERNAME}:${env.PROXY_PASSWORD}`);
     }
 
-    const targetBase = env.TARGET_UPSTREAM_URL || env.NGROK_URL;
-    const token = env.NGROK_AUTHTOKEN;
+    const deltaBase = (env.DELTA_BASE_URL || "https://cdn-ind.testnet.deltaex.org").replace(/\/$/, "");
+    const defaultUpstream = env.TARGET_UPSTREAM_URL || env.NGROK_URL || deltaBase;
 
     // 1. CORS Preflight handling
     if (request.method === "OPTIONS") {
@@ -29,14 +29,17 @@ export default {
     }
 
     // 2. Browser Root Check & Diagnostics (GET only on /)
-    // Runs before proxy validation so the status check always responds with 200 OK
     if ((url.pathname === "/" || url.pathname === "") && request.method === "GET") {
       return new Response(
         JSON.stringify({
           status: "ONLINE",
           message: "Gateway Proxy is Active",
-          upstream_configured: Boolean(targetBase),
           proxy_configured: Boolean(proxyHost && proxyAuth),
+          delta_connected: Boolean(env.DELTA_API_KEY && env.DELTA_API_SECRET),
+          endpoints: {
+            wallet_view: "/v2/wallet/balances",
+            test_static_ip: "/test-ip"
+          },
           timestamp: new Date().toISOString()
         }, null, 2),
         {
@@ -49,19 +52,12 @@ export default {
       );
     }
 
-    // 3. Validate environment configuration for outbound proxy calls
-    const missingConfigs = [];
-    if (!proxyHost) missingConfigs.push("PROXY_HOST");
-    if (!proxyPort) missingConfigs.push("PROXY_PORT");
-    if (!proxyAuth) missingConfigs.push("PROXY_AUTH (or PROXY_USERNAME & PROXY_PASSWORD)");
-    if (!targetBase) missingConfigs.push("TARGET_UPSTREAM_URL or NGROK_URL");
-
-    if (missingConfigs.length > 0) {
+    // 3. Outbound Proxy Settings Validation
+    if (!proxyHost || !proxyAuth) {
       return new Response(
         JSON.stringify({
           status: "CONFIG_ERROR",
-          message: "Required environment configuration is missing on Cloudflare. Run 'npm run push-secrets' to sync .env secrets to Cloudflare.",
-          missing_count: missingConfigs.length
+          message: "Webshare proxy settings missing (PROXY_HOST or PROXY_AUTH). Run 'npm run push-secrets' to update Cloudflare.",
         }, null, 2),
         {
           status: 500,
@@ -73,7 +69,7 @@ export default {
       );
     }
 
-    // 4. IP Check Endpoint (Verify Webshare Static IP without leaking IP publicly)
+    // 4. IP Check Endpoint (Verify Webshare Static IP without leaking raw IP publicly)
     if (url.pathname === "/test-ip") {
       try {
         const testRes = await fetchViaProxy(
@@ -102,7 +98,7 @@ export default {
         return new Response(
           JSON.stringify({ 
             status: "ERROR", 
-            error: "Proxy connection check failed" 
+            error: "Proxy connection check failed: " + e.message 
           }, null, 2), 
           { 
             status: 500,
@@ -115,10 +111,25 @@ export default {
       }
     }
 
-    // 5. Construct Target URL (forward path & search query)
-    const targetUrl = targetBase.replace(/\/$/, "") + url.pathname + url.search;
+    // 5. Determine Target Upstream Base URL
+    // If request is calling Delta Exchange API (/v2/...) -> route to Delta Exchange!
+    const isDeltaRoute = url.pathname.startsWith("/v2/");
+    const targetBase = isDeltaRoute ? deltaBase : defaultUpstream;
 
-    // 6. Headers sanitize & Ngrok credentials inject
+    if (!targetBase) {
+      return new Response(
+        JSON.stringify({ error: "Missing upstream target URL." }), 
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+
+    // 6. Construct Target URL
+    const targetUrl = targetBase + url.pathname + url.search;
+
+    // 7. Sanitize and Inject Headers
     const headers = new Headers(request.headers);
     headers.delete("host");
     headers.delete("cf-connecting-ip");
@@ -128,26 +139,52 @@ export default {
     headers.delete("x-forwarded-for");
     headers.delete("x-forwarded-proto");
     headers.delete("x-real-ip");
-    
+
+    // Auto-authenticate Delta API requests if called directly via browser without custom headers
+    if (isDeltaRoute && !headers.has("api-key") && env.DELTA_API_KEY && env.DELTA_API_SECRET) {
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const method = request.method;
+      const pathWithQuery = url.pathname + url.search;
+      const signatureData = method + timestamp + pathWithQuery;
+      
+      const signature = await generateHmacSha256(env.DELTA_API_SECRET, signatureData);
+
+      headers.set("api-key", env.DELTA_API_KEY);
+      headers.set("signature", signature);
+      headers.set("timestamp", timestamp);
+      headers.set("User-Agent", "python-rest-client");
+      headers.set("Content-Type", "application/json");
+      headers.set("Accept", "application/json");
+    }
+
     // Ngrok free warning bypass & authentication headers
     headers.set("ngrok-skip-browser-warning", "true");
-    if (token) {
-      headers.set("ngrok-agent-token", token);
+    if (env.NGROK_AUTHTOKEN) {
+      headers.set("ngrok-agent-token", env.NGROK_AUTHTOKEN);
     }
 
     try {
       const bodyData = ["GET", "HEAD"].includes(request.method) ? null : await request.arrayBuffer();
 
-      // Request Webshare Static Proxy ke through Ngrok ko forward hogi
-      const response = await fetchViaProxy(
-        targetUrl, 
-        {
+      // Forward request to target
+      let response;
+      if (isDeltaRoute) {
+        response = await fetch(targetUrl, {
           method: request.method,
           headers: headers,
           body: bodyData,
-        },
-        { host: proxyHost, port: proxyPort, auth: proxyAuth }
-      );
+        });
+      } else {
+        response = await fetchViaProxy(
+          targetUrl, 
+          {
+            method: request.method,
+            headers: headers,
+            body: bodyData,
+          },
+          { host: proxyHost, port: proxyPort, auth: proxyAuth }
+        );
+      }
 
       const responseHeaders = new Headers(response.headers);
       responseHeaders.set("Access-Control-Allow-Origin", "*");
@@ -162,8 +199,9 @@ export default {
     } catch (err) {
       return new Response(
         JSON.stringify({ 
-          error: "Gateway forwarding error", 
-          status: 502
+          error: "Gateway forwarding error: " + err.message, 
+          status: 502,
+          target_domain: new URL(targetUrl).hostname
         }, null, 2), 
         {
           status: 502,
@@ -177,6 +215,22 @@ export default {
   },
 };
 
+// Generate HMAC-SHA256 signature using native Web Crypto API
+async function generateHmacSha256(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signatureBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  return Array.from(new Uint8Array(signatureBuffer))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 // Webshare HTTP CONNECT Tunnel implementation
 async function fetchViaProxy(targetUrl, options, proxyConfig) {
   const { host, port, auth } = proxyConfig;
@@ -184,8 +238,8 @@ async function fetchViaProxy(targetUrl, options, proxyConfig) {
   const target = new URL(targetUrl);
   const targetPort = target.port || (target.protocol === "https:" ? 443 : 80);
 
-  // 1. Raw TCP socket open karein Webshare proxy ke sath
-  const socket = connect(`${host}:${port}`);
+  // 1. Raw TCP socket open karein Webshare proxy ke sath with starttls capability
+  const socket = connect(`${host}:${port}`, { secureTransport: "starttls" });
 
   // 2. Proxy CONNECT handshake
   const connectPayload = 
@@ -216,7 +270,7 @@ async function fetchViaProxy(targetUrl, options, proxyConfig) {
   }
   reader.releaseLock();
 
-  // 4. Target host (Ngrok / API) ke sath TLS handshake
+  // 4. Target host TLS handshake if HTTPS
   const tlsSocket = target.protocol === "https:" 
     ? socket.startTls({ expectedServerHostname: target.hostname }) 
     : socket;
@@ -276,6 +330,10 @@ async function parseRawHttpResponse(readableStream) {
       bodyStartIndex = new TextEncoder().encode(headerString + "\r\n\r\n").length;
       break;
     }
+  }
+
+  if (!headerString) {
+    throw new Error(`Upstream closed without valid HTTP headers. Bytes received: ${headerBuffer.length}. Content: ${new TextDecoder().decode(headerBuffer)}`);
   }
 
   const lines = headerString.split("\r\n");
