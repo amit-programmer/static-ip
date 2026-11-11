@@ -31,8 +31,8 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         print(f"📥 Incoming GET: {self.path} (from {self.client_address[0]})")
-        # 1. Health check endpoint
-        if self.path == "/" or self.path == "":
+        # 1. Health check endpoints
+        if self.path in ("/", "", "/health", "/v2/health"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
@@ -43,6 +43,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
                 "outbound_static_ip": proxy_host,
                 "target_delta_url": DELTA_BASE_URL,
                 "endpoints": {
+                    "health": "/v2/health (or /health)",
                     "wallet_balance": "/v2/wallet/balances",
                     "positions": "/v2/positions/margined",
                     "products": "/v2/products",
