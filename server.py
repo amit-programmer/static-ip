@@ -30,6 +30,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        print(f"📥 Incoming GET: {self.path} (from {self.client_address[0]})")
         # 1. Health check endpoint
         if self.path == "/" or self.path == "":
             self.send_response(200)
@@ -83,6 +84,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        print(f"📥 Incoming POST: {self.path} (from {self.client_address[0]})")
         if self.path.startswith("/v2/"):
             self._forward_to_delta("POST")
             return
@@ -90,6 +92,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_PUT(self):
+        print(f"📥 Incoming PUT: {self.path} (from {self.client_address[0]})")
         if self.path.startswith("/v2/"):
             self._forward_to_delta("PUT")
             return
@@ -97,6 +100,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_DELETE(self):
+        print(f"📥 Incoming DELETE: {self.path} (from {self.client_address[0]})")
         if self.path.startswith("/v2/"):
             self._forward_to_delta("DELETE")
             return
@@ -108,12 +112,14 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             payload = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
             res = make_authenticated_request(method, self.path, payload=payload)
+            print(f"📤 Delta API Response: HTTP {res.status_code}")
             self.send_response(res.status_code)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
             self.end_headers()
             self.wfile.write(res.content)
         except Exception as e:
+            print(f"❌ Forwarding Error: {e}")
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
