@@ -11,7 +11,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Delta Exchange API Settings
-DELTA_BASE_URL = os.getenv("DELTA_BASE_URL", "").strip().rstrip("/")
+DEFAULT_DELTA_URL = "https://cdn-ind.testnet.deltaex.org"
+raw_base_url = os.getenv("DELTA_BASE_URL", "").strip().rstrip("/")
+if not raw_base_url.startswith("http://") and not raw_base_url.startswith("https://"):
+    DELTA_BASE_URL = DEFAULT_DELTA_URL
+else:
+    DELTA_BASE_URL = raw_base_url
 API_KEY = os.getenv("DELTA_API_KEY", "").strip()
 API_SECRET = os.getenv("DELTA_API_SECRET", "").strip()
 
@@ -59,22 +64,6 @@ def check_egress_ip():
         return False
 
 TIME_OFFSET = 0
-
-def sync_time_offset():
-    """Delta server ka live timestamp /health se fetch karein (uncached, ultra-fast)"""
-    global TIME_OFFSET
-    try:
-        res = requests.get(f"{DELTA_BASE_URL}/health", timeout=5)
-        date_header = res.headers.get("Date")
-        if date_header:
-            dt = email.utils.parsedate_to_datetime(date_header)
-            server_ts = int(dt.timestamp())
-            TIME_OFFSET = server_ts - int(time.time())
-    except Exception:
-        TIME_OFFSET = 0
-
-# Initial sync at module load
-sync_time_offset()
 
 def get_server_timestamp():
     """Calculates instantaneous server timestamp without extra network latency or caching"""
