@@ -24,9 +24,13 @@ This project routes all Delta Exchange API traffic through a dedicated **Fixed O
 ```text
 ├── .env.example       # Safe template for environment variables (commit-safe)
 ├── .gitignore         # Ignores .env and temporary Python files
+├── .python-version    # Locks Python 3.11.9 for Render cloud builds
 ├── requirements.txt   # Lightweight Python dependencies (requests, python-dotenv)
-├── server.py          # Local REST API proxy server (routes /v2/... to Delta)
+├── server.py          # Single multi-threaded proxy server (Render / Cloud / Local)
+├── cluster.py         # Local multi-worker cluster with built-in round-robin Load Balancer
 ├── test_delta.py      # Connection test, static IP validator & wallet inspector
+├── locustfile.py      # Locust load testing suite
+├── locust_health.py   # Locust lightweight health endpoint benchmark
 └── README.md          # Documentation & quick start guide
 ```
 
@@ -134,7 +138,9 @@ USDT       | 200.16979903       | 200.16979903       | 0.00000000
 
 ## 🚀 Running the Proxy Server
 
-To start the local HTTP proxy gateway:
+### Option A: Single Multi-Threaded Server (Production / Render / Cloud)
+
+Ideal for cloud deployments (Render, Railway, Heroku, AWS) or single-process testing:
 ```bash
 python server.py
 ```
@@ -146,6 +152,39 @@ Console Output:
 👉 Open in browser: http://localhost:5000/v2/wallet/balances
 👉 Outbound Proxy: 45.38.107.97:6014
 ==================================================
+```
+
+---
+
+### Option B: High-Performance Multi-Worker Cluster (Local)
+
+Spawns 4 isolated worker processes (`server.py` on ports 5001, 5002, 5003, 5004) with a built-in multi-threaded Load Balancer on port 8000 (round-robin with automatic failover):
+```bash
+python cluster.py
+```
+
+Console Output:
+```text
+==================================================
+Starting 4 workers + Load Balancer...
+Worker started on port 5001 (PID ...)
+Worker started on port 5002 (PID ...)
+Worker started on port 5003 (PID ...)
+Worker started on port 5004 (PID ...)
+Load Balancer started on port 8000
+Test karo: http://127.0.0.1:8000/health
+Band karne ke liye: Ctrl + C
+==================================================
+```
+
+---
+
+### ⚡ Load Testing (Locust)
+
+To benchmark throughput and concurrent requests:
+```bash
+pip install locust
+locust -f locustfile.py --host http://127.0.0.1:8000
 ```
 
 ---

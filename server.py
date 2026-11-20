@@ -1,10 +1,9 @@
 import os
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import requests
 from dotenv import load_dotenv
 
-# Load functions and proxy configuration from test_delta
 from test_delta import (
     make_authenticated_request,
     check_egress_ip,
@@ -19,25 +18,36 @@ from test_delta import (
 PORT = int(os.getenv("PORT", "5000"))
 
 class DeltaProxyHandler(BaseHTTPRequestHandler):
+    # HTTP/1.0 hi rakho - har request ke baad connection band, Locust / curl se 100% compatible
+    # HTTP/1.1 me Content-Length bhejna padta hai warna client hang ho jata hai
+
+    def log_message(self, format, *args):
+        return
+
     def _send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "*")
 
+    def _send_json(self, status, obj):
+        body = json.dumps(obj, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_OPTIONS(self):
         self.send_response(200)
+        self.send_header("Content-Length", "0")
         self._send_cors_headers()
         self.end_headers()
 
     def do_GET(self):
         print(f"📥 Incoming GET: {self.path} (from {self.client_address[0]})")
-        # 1. Health check endpoints
         if self.path in ("/", "", "/health", "/v2/health"):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.end_headers()
-            response = {
+            self._send_json(200, {
                 "status": "ONLINE",
                 "message": "Delta Exchange Static IP Proxy Server is Running",
                 "outbound_static_ip": proxy_host,
@@ -49,39 +59,29 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
                     "products": "/v2/products",
                     "test_static_ip": "/test-ip"
                 }
-            }
-            self.wfile.write(json.dumps(response, indent=2).encode("utf-8"))
+            })
             return
 
-        # 2. Test IP endpoint (verify outbound IP is 45.38.107.97)
         if self.path == "/test-ip":
             try:
                 res = requests.get("https://ipv4.webshare.io/", proxies=PROXIES, timeout=10)
                 current_ip = res.text.strip()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self._send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({
+                self._send_json(200, {
                     "status": "SUCCESS",
                     "outbound_ip": current_ip,
                     "expected_ip": proxy_host,
                     "match": current_ip == proxy_host
-                }, indent=2).encode("utf-8"))
+                })
             except Exception as e:
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self._send_cors_headers()
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                self._send_json(500, {"error": str(e)})
             return
 
-        # 3. Delta Exchange API Forwarding (GET)
         if self.path.startswith("/v2/"):
             self._forward_to_delta("GET")
             return
 
         self.send_response(404)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_POST(self):
@@ -90,6 +90,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
             self._forward_to_delta("POST")
             return
         self.send_response(404)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_PUT(self):
@@ -98,6 +99,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
             self._forward_to_delta("PUT")
             return
         self.send_response(404)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_DELETE(self):
@@ -106,6 +108,7 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
             self._forward_to_delta("DELETE")
             return
         self.send_response(404)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def _forward_to_delta(self, method):
@@ -114,22 +117,24 @@ class DeltaProxyHandler(BaseHTTPRequestHandler):
             payload = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
             res = make_authenticated_request(method, self.path, payload=payload)
             print(f"📤 Delta API Response: HTTP {res.status_code}")
+            body = res.content
             self.send_response(res.status_code)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self._send_cors_headers()
             self.end_headers()
-            self.wfile.write(res.content)
+            self.wfile.write(body)
         except Exception as e:
             print(f"❌ Forwarding Error: {e}")
-            self.send_response(502)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            self._send_json(502, {"error": str(e)})
 
 def run_server():
+    ThreadingHTTPServer.daemon_threads = True
+    ThreadingHTTPServer.allow_reuse_address = True
+    ThreadingHTTPServer.request_queue_size = 128
+
     server_address = ("0.0.0.0", PORT)
-    httpd = HTTPServer(server_address, DeltaProxyHandler)
+    httpd = ThreadingHTTPServer(server_address, DeltaProxyHandler)
     print("==================================================")
     print(f"🚀 Delta Static IP Proxy Server started on port {PORT}")
     print(f"👉 Open in browser: http://localhost:{PORT}/v2/wallet/balances")
